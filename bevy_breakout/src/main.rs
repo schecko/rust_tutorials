@@ -53,6 +53,9 @@ struct Paddle;
 #[derive(Component)]
 struct Ball;
 
+#[derive(Component)]
+struct Brick;
+
 #[derive(Component, Deref, DerefMut)]
 struct Velocity(Vec2);
 
@@ -65,6 +68,7 @@ fn setup
 {
     commands.spawn(Camera2dBundle::default());
 
+    // paddle
     let paddle_y = BOTTOM_WALL + GAP_BETWEEN_PADDLE_AND_FLOOR;
     commands.spawn
     ((
@@ -83,6 +87,62 @@ fn setup
         Paddle
         //Collider,
     ));
+
+    // ball
+    commands.spawn
+    ((
+        MaterialMesh2dBundle {
+            mesh: meshes.add(shape::Circle::default().into()).into(),
+            material: materials.add(ColorMaterial::from(BALL_COLOR)),
+            transform: Transform::from_translation(BALL_STARTING_POSITION).with_scale(BALL_SIZE),
+            ..default()
+        },
+        Ball,
+        Velocity(INITIAL_BALL_DIRECTION.normalize() * BALL_SPEED)
+    ));
+
+    // bricks
+    {
+        let total_width_of_bricks = (RIGHT_WALL - LEFT_WALL) - 2. * GAP_BETWEEN_BRICKS_AND_SIDES;
+        let bottom_edge_of_bricks = paddle_y + GAP_BETWEEN_PADDLE_AND_BRICKS;
+        let total_height_of_bricks = TOP_WALL - bottom_edge_of_bricks - GAP_BETWEEN_BRICKS_AND_CEILING;
+
+        let n_col = (total_width_of_bricks / (BRICK_SIZE.x + GAP_BETWEEN_BRICKS)).floor() as usize;
+        let n_row = (total_height_of_bricks / (BRICK_SIZE.y + GAP_BETWEEN_BRICKS)).floor() as usize;
+        let n_vert_gaps = n_col - 1;
+
+        let center_of_bricks = (LEFT_WALL + RIGHT_WALL) / 2.0;
+        let left_edge_of_bricks = center_of_bricks
+            - (n_col as f32 / 2.0 * BRICK_SIZE.x)
+            - (n_vert_gaps as f32 / 2.0 * GAP_BETWEEN_BRICKS);
+        
+        let offset = Vec2::new(left_edge_of_bricks, bottom_edge_of_bricks) + BRICK_SIZE / Vec2::splat(2.0);
+
+        for row in 0..n_row {
+            for col in 0..n_col {
+                let pos = offset + Vec2::new(col as f32, row as f32) * ( BRICK_SIZE + Vec2::splat(GAP_BETWEEN_BRICKS) );
+
+                commands.spawn
+                ((
+                    SpriteBundle{
+                        sprite: Sprite {
+                            color: BRICK_COLOR,
+                            ..default()
+                        },
+                        transform: Transform {
+                            translation: pos.extend(0.0),
+                            scale: BRICK_SIZE.extend(1.0),
+                            ..default()
+                        },
+                        ..default()
+                    },
+                    Brick,
+                    //Collider
+                ));
+            }
+        }
+        
+    }
 }
 
 fn move_paddle
@@ -106,11 +166,18 @@ fn move_paddle
     let right_bound = RIGHT_WALL - WALL_THICKNESS / 2.0 + PADDLE_SIZE.x / 2.0 - PADDLE_PADDING;
     paddle_transform.translation.x = new_paddle_pos.clamp(left_bound, right_bound);
 }
+
+fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
+    for ( mut trans, vel ) in &mut query {
+        trans.translation += vel.0.extend(0.0) * Vec3::splat(TIME_STEP);
+    }
+}
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_startup_system(setup)
         .add_system(move_paddle)
+        .add_system(apply_velocity)
         .run();
 }
 
