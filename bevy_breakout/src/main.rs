@@ -18,7 +18,7 @@ const PADDLE_PADDING: f32 = 10.0;
 const BALL_STARTING_POSITION: Vec3 = Vec3::new(0.0, -50.0, 1.0);
 const BALL_SIZE: Vec3 = Vec3::new(30.0, 30.0, 0.0);
 const BALL_SPEED: f32 = 400.0;
-const INITIAL_BALL_DIRECTION: Vec2 = Vec2::new(0.5, -0.5);
+const INITIAL_BALL_DIRECTION: Vec2 = Vec2::new(0.5, 0.5);
 
 const WALL_THICKNESS: f32 = 10.0;
 // x coordinates
@@ -56,6 +56,12 @@ struct Ball;
 #[derive(Component)]
 struct Brick;
 
+#[derive(Component)]
+struct Collider;
+
+#[derive(Default)]
+struct CollisionEvent;
+
 #[derive(Component, Deref, DerefMut)]
 struct Velocity(Vec2);
 
@@ -84,8 +90,8 @@ fn setup
             },
             ..default()
         },
-        Paddle
-        //Collider,
+        Paddle,
+        Collider,
     ));
 
     // ball
@@ -98,7 +104,7 @@ fn setup
             ..default()
         },
         Ball,
-        Velocity(INITIAL_BALL_DIRECTION.normalize() * BALL_SPEED)
+        Velocity(INITIAL_BALL_DIRECTION.normalize() * BALL_SPEED),
     ));
 
     // bricks
@@ -137,12 +143,49 @@ fn setup
                         ..default()
                     },
                     Brick,
-                    //Collider
+                    Collider
                 ));
             }
         }
-        
     }
+
+    // walls
+    {
+        let positions = &[
+            Vec2::new(LEFT_WALL, 0.0),
+            Vec2::new(RIGHT_WALL, 0.0),
+            Vec2::new(0.0, BOTTOM_WALL),
+            Vec2::new(0.0, TOP_WALL),
+        ];
+
+        let arena_size = Vec2::new(RIGHT_WALL - LEFT_WALL, TOP_WALL - BOTTOM_WALL);
+        let sizes = &[
+            Vec2::new(WALL_THICKNESS, arena_size.y + WALL_THICKNESS),
+            Vec2::new(WALL_THICKNESS, arena_size.y + WALL_THICKNESS),
+            Vec2::new(arena_size.x + WALL_THICKNESS, WALL_THICKNESS),
+            Vec2::new(arena_size.x + WALL_THICKNESS, WALL_THICKNESS),
+        ];
+
+        for ( pos, size ) in positions.iter().zip(sizes) {
+            commands.spawn
+            ((
+                SpriteBundle {
+                    transform: Transform {
+                        translation: pos.extend(0.0),
+                        scale: size.extend(1.0),
+                        ..default()
+                    },
+                    sprite: Sprite {
+                        color: WALL_COLOR,
+                        ..default()
+                    },
+                    ..default()
+                },
+                Collider,
+            ));
+        }
+    }
+    
 }
 
 fn move_paddle
@@ -172,12 +215,63 @@ fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
         trans.translation += vel.0.extend(0.0) * Vec3::splat(TIME_STEP);
     }
 }
+
+fn collisions
+(
+    mut commands: Commands,
+    mut ball_query: Query<(&mut Velocity, &Transform), With<Ball>>,
+    collider_query: Query<(Entity, &Transform, Option<&Brick>), With<Collider>>,
+    mut collision_events: EventWriter<CollisionEvent>,
+)
+{
+    let (mut ball_velocity, ball_transform) = ball_query.single_mut();
+    let ball_size = ball_transform.scale.truncate();
+
+    for ( collider_entity, transform, maybe_brick) in &collider_query {
+        let collision = collide(
+            ball_transform.translation,
+            ball_size,
+            transform.translation,
+            transform.scale.truncate(),
+        );
+
+        let collision = match collision
+        {
+            Some(result) => result,
+            None => continue,
+        };
+
+        collision_events.send_default();
+
+        if maybe_brick.is_some() {
+            commands.entity(collider_entity).despawn();
+        }
+
+        let reflect = match collision {
+            Collision::Left => ( ball_velocity.x > 0.0, false ),
+            Collision::Right => ( ball_velocity.x < 0.0, false ),
+            Collision::Top => ( false, ball_velocity.y < 0.0 ),
+            Collision::Bottom => ( false, ball_velocity.y > 0.0 ),
+            Collision::Inside => ( false, false ),
+        };
+
+        if reflect.0 {
+            ball_velocity.x *= -1.0;
+        }
+        if reflect.1 {
+            ball_velocity.y *= -1.0;
+        }
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_startup_system(setup)
         .add_system(move_paddle)
         .add_system(apply_velocity)
+        .add_system(collisions)
+        .add_event::<CollisionEvent>()
         .run();
 }
 
