@@ -4,7 +4,43 @@ use winit::{
     window::WindowBuilder,
 };
 
-fn main() {
+const SHADER: &'static str = r##"
+    struct VertexOutput
+    {
+        @builtin(position) clip_position: vec4<f32>,
+    }
+
+    struct VertexInput
+    {
+        @builtin(vertex_index) vertex_index: u32,
+    }
+
+    @vertex
+    fn vs_main(in: VertexInput) -> VertexOutput
+    {
+        var out: VertexOutput;
+        let x = f32(1 - i32(in.vertex_index)) * 0.5;
+        let y = f32(i32(in.vertex_index & 1u) * 2 - 1) * 0.5;
+        out.clip_position = vec4<f32>(x, y, 0.0, 1.0);
+        return out;
+    }
+
+    struct FragmentOutput
+    {
+        @location(0) color: vec4<f32>,
+    }
+
+    @fragment
+    fn fs_main(in: VertexOutput) -> FragmentOutput
+    {
+        var out: FragmentOutput;
+        out.color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
+        return out;
+    }
+"##;
+
+fn main()
+{
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
@@ -44,6 +80,50 @@ fn main() {
         view_formats: Vec::new(),
     };
     surface.configure(&device, &surface_config);
+
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Default Shader"),
+        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Pipeline Layout"),
+        bind_group_layouts: &[],
+        push_constant_ranges: &[],
+    });
+    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Render Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: "vs_main",
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_config.format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None
+    });
     event_loop.run(move |event, _, control_flow|
     {
         match event
@@ -81,7 +161,7 @@ fn main() {
                 let view = output.texture.create_view(&Default::default());
                 let mut encoder = device.create_command_encoder(&Default::default());
 
-                let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Default Render Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &view,
@@ -93,6 +173,8 @@ fn main() {
                     })],
                     depth_stencil_attachment: None,
                 });
+                render_pass.set_pipeline(&render_pipeline);
+                render_pass.draw(0..3, 0..1);
                 drop(render_pass);
 
                 queue.submit(std::iter::once(encoder.finish()));
